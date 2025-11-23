@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"sync"
@@ -468,16 +469,40 @@ func createUser(ctx iris.Context) {
 	if user.ID == "" {
 		user.ID = generateID()
 	}
-	user.CreatedAt = time.Now()
-	user.Active = true
 
 	usersMutex.Lock()
+	defer usersMutex.Unlock()
+
+	// Check for duplicate ID
+	if existingUser, exists := users[user.ID]; exists {
+		ctx.StatusCode(iris.StatusConflict)
+		ctx.JSON(iris.Map{
+			"error":        "User with this ID already exists",
+			"existingUser": existingUser,
+		})
+		return
+	}
+
+	// Check for duplicate email
+	for _, existingUser := range users {
+		if existingUser.Email == user.Email {
+			ctx.StatusCode(iris.StatusConflict)
+			ctx.JSON(iris.Map{
+				"error":        "User with this email already exists",
+				"existingUser": existingUser,
+			})
+			return
+		}
+	}
+
+	user.CreatedAt = time.Now()
+	user.Active = true
 	users[user.ID] = user
-	usersMutex.Unlock()
 
 	ctx.JSON(iris.Map{
 		"success": true,
 		"user":    user,
+		"message": "User created successfully",
 	})
 }
 
@@ -568,7 +593,8 @@ func deleteUser(ctx iris.Context) {
 // Sync users from external system
 func syncUsers(ctx iris.Context) {
 	var req struct {
-		Users []User `json:"users"`
+		Users          []User `json:"users"`
+		UpdateExisting bool   `json:"updateExisting"` // If true, update existing users
 	}
 
 	if err := ctx.ReadJSON(&req); err != nil {
@@ -581,22 +607,74 @@ func syncUsers(ctx iris.Context) {
 	defer usersMutex.Unlock()
 
 	synced := 0
+	updated := 0
+	skipped := 0
+	var errors []string
+
 	for _, user := range req.Users {
 		if user.ID == "" {
+			errors = append(errors, "User without ID skipped")
+			skipped++
 			continue
 		}
-		user.Active = true
-		if user.CreatedAt.IsZero() {
-			user.CreatedAt = time.Now()
+
+		// Check if user already exists
+		existingUser, exists := users[user.ID]
+
+		if exists {
+			if req.UpdateExisting {
+				// Update existing user
+				if user.Username != "" {
+					existingUser.Username = user.Username
+				}
+				if user.Email != "" {
+					existingUser.Email = user.Email
+				}
+				if user.Role != "" {
+					existingUser.Role = user.Role
+				}
+				if user.Metadata != nil {
+					existingUser.Metadata = user.Metadata
+				}
+				existingUser.Active = user.Active
+				users[user.ID] = existingUser
+				updated++
+			} else {
+				// Skip duplicate
+				skipped++
+			}
+		} else {
+			// Check for duplicate email
+			emailExists := false
+			for _, u := range users {
+				if u.Email == user.Email && user.Email != "" {
+					emailExists = true
+					errors = append(errors, "Duplicate email for user ID "+user.ID+": "+user.Email)
+					skipped++
+					break
+				}
+			}
+
+			if !emailExists {
+				// Create new user
+				user.Active = true
+				if user.CreatedAt.IsZero() {
+					user.CreatedAt = time.Now()
+				}
+				users[user.ID] = user
+				synced++
+			}
 		}
-		users[user.ID] = user
-		synced++
 	}
 
 	ctx.JSON(iris.Map{
-		"success": true,
-		"synced":  synced,
-		"total":   len(req.Users),
+		"success":    true,
+		"synced":     synced,
+		"updated":    updated,
+		"skipped":    skipped,
+		"total":      len(req.Users),
+		"errors":     errors,
+		"message":    fmt.Sprintf("Synced: %d, Updated: %d, Skipped: %d", synced, updated, skipped),
 	})
 }
 
