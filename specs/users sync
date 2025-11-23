@@ -1,0 +1,69 @@
+3 Ways to Manage Users:
+1. Internal User Management (Default)
+Use the built-in API to manage users:
+bash# Create a user
+curl -X POST http://localhost:8080/api/v1/users \
+  -H "X-API-Key: ak_test_key_12345" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "emp001",
+    "username": "Alice Johnson",
+    "email": "alice@company.com",
+    "role": "employee",
+    "metadata": {
+      "department": "Engineering",
+      "employeeId": "EMP-12345"
+    }
+  }'
+
+# List all users
+curl http://localhost:8080/api/v1/users \
+  -H "X-API-Key: ak_test_key_12345"
+
+# Update user
+curl -X PUT http://localhost:8080/api/v1/users/emp001 \
+  -H "X-API-Key: ak_test_key_12345" \
+  -H "Content-Type: application/json" \
+  -d '{"role": "manager"}'
+2. Bulk Sync from External System
+Import users from your existing system:
+bashcurl -X POST http://localhost:8080/api/v1/users/sync \
+  -H "X-API-Key: ak_test_key_12345" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "users": [
+      {
+        "id": "emp001",
+        "username": "Alice",
+        "email": "alice@company.com",
+        "role": "employee"
+      },
+      {
+        "id": "emp002",
+        "username": "Bob",
+        "email": "bob@company.com",
+        "role": "manager"
+      }
+    ]
+  }'
+3. Configure External Authentication
+Point to your existing authentication system:
+bash# Configure to use external API
+curl -X POST http://localhost:8080/api/v1/auth/config \
+  -H "X-API-Key: ak_test_key_12345" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "api",
+    "endpoint": "https://your-auth-system.com/api/users",
+    "apiKey": "your-auth-system-api-key",
+    "enabled": true
+  }'
+
+# Or configure JWT validation
+curl -X POST http://localhost:8080/api/v1/auth/config \
+  -H "X-API-Key: ak_test_key_12345" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "jwt",
+    "enabled": true
+  }'

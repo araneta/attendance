@@ -1,0 +1,16 @@
+Available Endpoints:
+Public (No Auth):
+
+POST /api/qr/generate - Generate QR code
+POST /api/qr/scan - Scan QR code
+
+Integration API (Requires API Key):
+
+GET /api/v1/attendance - List attendance records
+GET /api/v1/attendance/{id} - Get specific record
+POST /api/v1/webhooks - Create webhook
+GET /api/v1/webhooks - List webhooks
+DELETE /api/v1/webhooks/{id} - Delete webhook
+POST /api/v1/api-keys - Create API key
+GET /api/v1/api-keys - List API keys
+DELETE /api/v1/api-keys/{key} - Revoke API key
