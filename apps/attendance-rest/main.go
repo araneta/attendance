@@ -49,6 +49,18 @@ type AttendanceRecord struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
+// Add unique constraint: one user can only scan each QR code once
+func (AttendanceRecord) TableName() string {
+	return "attendance_records"
+}
+
+// This will be called after auto-migration
+func addAttendanceConstraints(db *gorm.DB) {
+	// Create unique index to prevent duplicate scans
+	db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_user_qr_unique 
+		ON attendance_records(user_id, qr_code)`)
+}
+
 type QRCode struct {
 	Code      string    `gorm:"primaryKey" json:"code"`
 	AdminID   string    `gorm:"not null" json:"adminId"`
@@ -151,6 +163,65 @@ func initDB() {
 	
 	log.Println("Database connected successfully")
 	
+	// Check if users table exists with old schema
+	//var tableCount int64
+	err = db.Exec("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='users'").Error
+	hasOldUsers := err == nil
+	
+	if hasOldUsers {
+		// Check if password_hash column exists
+		var columnExists int
+		db.Raw("SELECT COUNT(*) FROM pragma_table_info('users') WHERE name='password_hash'").Scan(&columnExists)
+		
+		if columnExists == 0 {
+			log.Println("⚠️  Old database detected without authentication!")
+			log.Println("⚠️  Backing up and recreating database with authentication...")
+			
+			// Backup old data
+			type OldUser struct {
+				ID        string
+				Username  string
+				Email     string
+				Role      string
+				Metadata  string
+				Active    bool
+				CreatedAt time.Time
+				UpdatedAt time.Time
+			}
+			var oldUsers []OldUser
+			db.Table("users").Find(&oldUsers)
+			
+			// Drop old table
+			db.Migrator().DropTable(&User{})
+			
+			// Create new table with password_hash
+			db.AutoMigrate(&User{})
+			
+			// Restore users with default password
+			defaultPass, _ := bcrypt.GenerateFromPassword([]byte("changeme123"), bcrypt.DefaultCost)
+			for _, oldUser := range oldUsers {
+				newUser := User{
+					ID:           oldUser.ID,
+					Username:     oldUser.Username,
+					Email:        oldUser.Email,
+					PasswordHash: string(defaultPass),
+					Role:         oldUser.Role,
+					Metadata:     oldUser.Metadata,
+					Active:       oldUser.Active,
+					CreatedAt:    oldUser.CreatedAt,
+					UpdatedAt:    oldUser.UpdatedAt,
+				}
+				db.Create(&newUser)
+			}
+			
+			if len(oldUsers) > 0 {
+				log.Printf("✅ Migrated %d existing users", len(oldUsers))
+				log.Println("⚠️  All existing users now have password: changeme123")
+				log.Println("⚠️  Users should change their passwords after first login!")
+			}
+		}
+	}
+	
 	// Auto Migrate (create tables)
 	err = db.AutoMigrate(
 		&User{},
@@ -165,6 +236,9 @@ func initDB() {
 	if err != nil {
 		log.Fatal("Failed to migrate database:", err)
 	}
+	
+	// Add unique constraints
+	addAttendanceConstraints(db)
 	
 	log.Println("Database tables migrated successfully")
 	
@@ -613,6 +687,40 @@ func scanQRCode(ctx iris.Context) {
 		})
 		return
 	}
+
+	// CRITICAL FIX: Check if user already scanned this QR code
+	var existingRecord AttendanceRecord
+	err := db.Where("user_id = ? AND qr_code = ?", user.ID, req.QRCode).First(&existingRecord).Error
+	
+	if err == nil {
+		// User already scanned this QR code
+		ctx.JSON(iris.Map{
+			"success": false,
+			"message": "You have already scanned this QR code",
+			"existingRecord": existingRecord,
+		})
+		return
+	}
+
+	// OPTIONAL: Prevent duplicate attendance on the same day
+	// Uncomment if you want only one attendance per user per day
+	/*
+	startOfDay := time.Now().Truncate(24 * time.Hour)
+	endOfDay := startOfDay.Add(24 * time.Hour)
+	
+	var todayRecord AttendanceRecord
+	err = db.Where("user_id = ? AND timestamp >= ? AND timestamp < ?", 
+		user.ID, startOfDay, endOfDay).First(&todayRecord).Error
+	
+	if err == nil {
+		ctx.JSON(iris.Map{
+			"success": false,
+			"message": "Attendance already recorded today",
+			"existingRecord": todayRecord,
+		})
+		return
+	}
+	*/
 
 	record := AttendanceRecord{
 		ID:        generateID(),
