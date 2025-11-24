@@ -8,3 +8,8 @@ list attendance of a user
 curl http://localhost:8080/api/v1/attendance?userId=user1 \
   -H "X-API-Key: ak_test_key_12345"
 {"count":0,"records":null,"success":true}
+
+
+curl -X POST http://localhost:8080/api/qr/generate \
+  -H "Content-Type: application/json" \
+  -d '{"adminId": "admin1"}'

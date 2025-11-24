@@ -1,0 +1,43 @@
+# 2. Enable Go modules
+export GO111MODULE=on
+
+# 3. Initialize module
+go mod init attendance-app
+
+# 4. Add all dependencies at once
+cat > go.mod << 'EOF'
+module attendance-app
+
+go 1.22
+
+require (
+	github.com/gorilla/websocket v1.5.0
+	github.com/kataras/iris/v12 v12.2.5
+	gorm.io/driver/sqlite v1.5.4
+	gorm.io/driver/postgres v1.5.4
+	gorm.io/driver/mysql v1.5.2
+	gorm.io/gorm v1.25.5
+)
+EOF
+
+# 5. Download dependencies
+go mod download
+
+# 6. Tidy up
+go mod tidy
+
+# 7. Run the app
+go run main.go
+```
+
+## **✅ Verify It Works:**
+
+After running the commands, you should see:
+```
+go: downloading github.com/kataras/iris/v12 v12.2.5
+go: downloading gorm.io/gorm v1.25.5
+go: downloading github.com/gorilla/websocket v1.5.0
+...
+✅ Server starting on :8080
+✅ Database: SQLite (attendance.db)
+✅ Default API Key: ak_test_key_12345
