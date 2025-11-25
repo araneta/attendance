@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"time"
+	"strings"
 
 	"golang.org/x/crypto/bcrypt"
 	"github.com/gorilla/websocket"
@@ -307,13 +308,40 @@ func initDB() {
 	
 	// Check if users table exists with old schema
 	//var tableCount int64
-	err = db.Exec("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='users'").Error
-	hasOldUsers := err == nil
+	var count int64
+	hasOldUsers := false
+	if strings.ToLower(config.Database.Type) == "sqlite" {
+		err = db.Exec(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='users'`).Error
+		if err == nil || !strings.Contains(err.Error(), "no such table") {
+			hasOldUsers = true
+		}
+	}
 	
 	if hasOldUsers {
 		// Check if password_hash column exists
 		var columnExists int
-		db.Raw("SELECT COUNT(*) FROM pragma_table_info('users') WHERE name='password_hash'").Scan(&columnExists)
+		switch strings.ToLower(config.Database.Type) {
+		case "sqlite":
+			db.Raw(`SELECT COUNT(*) FROM pragma_table_info('users') WHERE name='password_hash'`).Scan(&count)
+
+		case "postgres":
+			db.Raw(`
+				SELECT COUNT(*) 
+				FROM information_schema.columns 
+				WHERE table_schema = 'public'
+				AND table_name = 'users'
+				AND column_name = 'password_hash'
+			`).Scan(&count)
+
+		case "mysql":
+			db.Raw(`
+				SELECT COUNT(*) 
+				FROM information_schema.columns 
+				WHERE table_name = 'users'
+				AND column_name = 'password_hash'
+			`).Scan(&count)
+		}
+
 		
 		if columnExists == 0 {
 			log.Println("⚠️  Old database detected without authentication!")
@@ -385,7 +413,7 @@ func initDB() {
 	log.Println("Database tables migrated successfully")
 	
 	// Create default API key if not exists
-	var count int64
+	//var count int64
 	db.Model(&APIKey{}).Count(&count)
 	if count == 0 {
 		defaultKey := APIKey{
