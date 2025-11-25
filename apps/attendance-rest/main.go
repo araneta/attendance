@@ -12,11 +12,13 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"github.com/gorilla/websocket"
 	"github.com/kataras/iris/v12"
-	_ "gorm.io/driver/postgres"
-	_ "gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
+	"gorm.io/driver/mysql"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+	"gopkg.in/yaml.v3"
+	"os"
 )
 
 // Database Models
@@ -134,34 +136,182 @@ type LoginResponse struct {
 }
 
 var (
-	db  *gorm.DB
-	hub *Hub
+	db     *gorm.DB
+	hub    *Hub
+	config Config
 )
+
+// Configuration structures
+type Config struct {
+	App struct {
+		Name    string `yaml:"name"`
+		Version string `yaml:"version"`
+		Port    int    `yaml:"port"`
+	} `yaml:"app"`
+	
+	Database struct {
+		Type     string `yaml:"type"`
+		Postgres struct {
+			Host     string `yaml:"host"`
+			Port     int    `yaml:"port"`
+			User     string `yaml:"user"`
+			Password string `yaml:"password"`
+			DBName   string `yaml:"dbname"`
+			SSLMode  string `yaml:"sslmode"`
+			TimeZone string `yaml:"timezone"`
+		} `yaml:"postgres"`
+		MySQL struct {
+			Host      string `yaml:"host"`
+			Port      int    `yaml:"port"`
+			User      string `yaml:"user"`
+			Password  string `yaml:"password"`
+			DBName    string `yaml:"dbname"`
+			Charset   string `yaml:"charset"`
+			ParseTime bool   `yaml:"parseTime"`
+			Loc       string `yaml:"loc"`
+		} `yaml:"mysql"`
+		SQLite struct {
+			Path string `yaml:"path"`
+		} `yaml:"sqlite"`
+		Pool struct {
+			MaxIdleConns    int `yaml:"maxIdleConns"`
+			MaxOpenConns    int `yaml:"maxOpenConns"`
+			ConnMaxLifetime int `yaml:"connMaxLifetime"`
+		} `yaml:"pool"`
+	} `yaml:"database"`
+	
+	Auth struct {
+		SessionDuration int    `yaml:"sessionDuration"`
+		DefaultPassword string `yaml:"defaultPassword"`
+		BcryptCost      int    `yaml:"bcryptCost"`
+	} `yaml:"auth"`
+	
+	QRCode struct {
+		ExpirationMinutes int  `yaml:"expirationMinutes"`
+		AutoCleanup       bool `yaml:"autoCleanup"`
+	} `yaml:"qrcode"`
+	
+	API struct {
+		DefaultKey string `yaml:"defaultKey"`
+		RateLimit  int    `yaml:"rateLimit"`
+	} `yaml:"api"`
+	
+	CORS struct {
+		AllowOrigins string `yaml:"allowOrigins"`
+		AllowMethods string `yaml:"allowMethods"`
+		AllowHeaders string `yaml:"allowHeaders"`
+	} `yaml:"cors"`
+	
+	Logging struct {
+		Level  string `yaml:"level"`
+		Format string `yaml:"format"`
+	} `yaml:"logging"`
+	
+	DefaultAdmin struct {
+		Email    string `yaml:"email"`
+		Password string `yaml:"password"`
+		Username string `yaml:"username"`
+	} `yaml:"defaultAdmin"`
+	
+	DefaultUsers []struct {
+		Email    string `yaml:"email"`
+		Password string `yaml:"password"`
+		Username string `yaml:"username"`
+		Role     string `yaml:"role"`
+	} `yaml:"defaultUsers"`
+}
+
+// Load configuration from iris.yml
+func loadConfig() error {
+	configFile := "iris.yml"
+	
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		return fmt.Errorf("failed to read config file: %v", err)
+	}
+	
+	err = yaml.Unmarshal(data, &config)
+	if err != nil {
+		return fmt.Errorf("failed to parse config file: %v", err)
+	}
+	
+	log.Printf("✅ Configuration loaded from %s", configFile)
+	log.Printf("   App: %s v%s", config.App.Name, config.App.Version)
+	log.Printf("   Database: %s", config.Database.Type)
+	
+	return nil
+}
 
 // Initialize Database
 func initDB() {
 	var err error
+	var dialector gorm.Dialector
 	
-	// Choose your database (uncomment one):
+	// Select database based on configuration
+	switch config.Database.Type {
+	case "postgres":
+		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s TimeZone=%s",
+			config.Database.Postgres.Host,
+			config.Database.Postgres.Port,
+			config.Database.Postgres.User,
+			config.Database.Postgres.Password,
+			config.Database.Postgres.DBName,
+			config.Database.Postgres.SSLMode,
+			config.Database.Postgres.TimeZone,
+		)
+		dialector = postgres.Open(dsn)
+		log.Printf("Connecting to PostgreSQL: %s:%d/%s",
+			config.Database.Postgres.Host,
+			config.Database.Postgres.Port,
+			config.Database.Postgres.DBName,
+		)
 	
-	// SQLite (easiest for development - no setup needed)
-	db, err = gorm.Open(sqlite.Open("attendance.db"), &gorm.Config{
+	case "mysql":
+		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=%s&parseTime=%t&loc=%s",
+			config.Database.MySQL.User,
+			config.Database.MySQL.Password,
+			config.Database.MySQL.Host,
+			config.Database.MySQL.Port,
+			config.Database.MySQL.DBName,
+			config.Database.MySQL.Charset,
+			config.Database.MySQL.ParseTime,
+			config.Database.MySQL.Loc,
+		)
+		dialector = mysql.Open(dsn)
+		log.Printf("Connecting to MySQL: %s:%d/%s",
+			config.Database.MySQL.Host,
+			config.Database.MySQL.Port,
+			config.Database.MySQL.DBName,
+		)
+	
+	case "sqlite":
+		dialector = sqlite.Open(config.Database.SQLite.Path)
+		log.Printf("Connecting to SQLite: %s", config.Database.SQLite.Path)
+	
+	default:
+		log.Fatalf("Unsupported database type: %s", config.Database.Type)
+	}
+	
+	// Open database connection
+	db, err = gorm.Open(dialector, &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Info),
 	})
-	
-	// PostgreSQL
-	// dsn := "host=localhost user=postgres password=yourpassword dbname=attendance port=5432 sslmode=disable"
-	// db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
-	
-	// MySQL
-	// dsn := "user:password@tcp(127.0.0.1:3306)/attendance?charset=utf8mb4&parseTime=True&loc=Local"
-	// db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{})
 	
 	if err != nil {
 		log.Fatal("Failed to connect to database:", err)
 	}
 	
-	log.Println("Database connected successfully")
+	// Configure connection pool
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Fatal("Failed to get database instance:", err)
+	}
+	
+	sqlDB.SetMaxIdleConns(config.Database.Pool.MaxIdleConns)
+	sqlDB.SetMaxOpenConns(config.Database.Pool.MaxOpenConns)
+	sqlDB.SetConnMaxLifetime(time.Duration(config.Database.Pool.ConnMaxLifetime) * time.Second)
+	
+	log.Println("✅ Database connected successfully")
 	
 	// Check if users table exists with old schema
 	//var tableCount int64
@@ -247,55 +397,63 @@ func initDB() {
 	db.Model(&APIKey{}).Count(&count)
 	if count == 0 {
 		defaultKey := APIKey{
-			Key:       "ak_test_key_12345",
-			Name:      "Default Test Key",
+			Key:       config.API.DefaultKey,
+			Name:      "Default API Key",
 			Enabled:   true,
 			CreatedAt: time.Now(),
 		}
 		db.Create(&defaultKey)
-		log.Println("Default API key created: ak_test_key_12345")
+		log.Printf("✅ Default API key created: %s", config.API.DefaultKey)
+	}
+	
+	// Create default admin user if not exists
+	db.Model(&User{}).Where("role = ?", "admin").Count(&count)
+	if count == 0 {
+		adminPass, _ := bcrypt.GenerateFromPassword(
+			[]byte(config.DefaultAdmin.Password),
+			config.Auth.BcryptCost,
+		)
+		
+		adminUser := User{
+			ID:           "admin1",
+			Username:     config.DefaultAdmin.Username,
+			Email:        config.DefaultAdmin.Email,
+			PasswordHash: string(adminPass),
+			Role:         "admin",
+			Active:       true,
+		}
+		db.Create(&adminUser)
+		log.Printf("✅ Default admin created:")
+		log.Printf("   Email: %s", config.DefaultAdmin.Email)
+		log.Printf("   Password: %s", config.DefaultAdmin.Password)
 	}
 	
 	// Create default users if not exists
-	db.Model(&User{}).Count(&count)
-	if count == 0 {
-		// Hash passwords
-		adminPass, _ := bcrypt.GenerateFromPassword([]byte("admin123"), bcrypt.DefaultCost)
-		userPass, _ := bcrypt.GenerateFromPassword([]byte("user123"), bcrypt.DefaultCost)
-
-		defaultUsers := []User{
-			{
-				ID:           "user1",
-				Username:     "John Doe",
-				Email:        "john@example.com",
+	for i, userConfig := range config.DefaultUsers {
+		var existingUser User
+		err := db.Where("email = ?", userConfig.Email).First(&existingUser).Error
+		
+		if err != nil {
+			userPass, _ := bcrypt.GenerateFromPassword(
+				[]byte(userConfig.Password),
+				config.Auth.BcryptCost,
+			)
+			
+			user := User{
+				ID:           fmt.Sprintf("user%d", i+1),
+				Username:     userConfig.Username,
+				Email:        userConfig.Email,
 				PasswordHash: string(userPass),
-				Role:         "employee",
+				Role:         userConfig.Role,
 				Active:       true,
-			},
-			{
-				ID:           "user2",
-				Username:     "Jane Smith",
-				Email:        "jane@example.com",
-				PasswordHash: string(userPass),
-				Role:         "employee",
-				Active:       true,
-			},
-			{
-				ID:           "admin1",
-				Username:     "Admin User",
-				Email:        "admin@example.com",
-				PasswordHash: string(adminPass),
-				Role:         "admin",
-				Active:       true,
-			},
+			}
+			db.Create(&user)
+			log.Printf("✅ Default user created: %s / %s",
+				userConfig.Email, userConfig.Password)
 		}
-		db.Create(&defaultUsers)
-		log.Println("Default users created:")
-		log.Println("  Admin: admin@example.com / admin123")
-		log.Println("  User: john@example.com / user123")
-		log.Println("  User: jane@example.com / user123")
 	}
 }
+
 
 // Hub Management
 func newHub() *Hub {
@@ -512,11 +670,11 @@ func login(ctx iris.Context) {
 		return
 	}
 
-	// Create session (valid for 24 hours)
+	// Create session (valid for configured duration)
 	session := Session{
 		Token:     generateID(),
 		UserID:    user.ID,
-		ExpiresAt: time.Now().Add(24 * time.Hour),
+		ExpiresAt: time.Now().Add(time.Duration(config.Auth.SessionDuration) * time.Hour),
 	}
 
 	if err := db.Create(&session).Error; err != nil {
@@ -564,7 +722,10 @@ func register(ctx iris.Context) {
 	}
 
 	// Hash password
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	hashedPassword, err := bcrypt.GenerateFromPassword(
+		[]byte(req.Password),
+		config.Auth.BcryptCost,
+	)
 	if err != nil {
 		ctx.StatusCode(iris.StatusInternalServerError)
 		ctx.JSON(iris.Map{"error": "Failed to hash password"})
@@ -594,7 +755,7 @@ func register(ctx iris.Context) {
 	session := Session{
 		Token:     generateID(),
 		UserID:    user.ID,
-		ExpiresAt: time.Now().Add(24 * time.Hour),
+		ExpiresAt: time.Now().Add(time.Duration(config.Auth.SessionDuration) * time.Hour),
 	}
 	db.Create(&session)
 
@@ -626,7 +787,7 @@ func generateQRCode(ctx iris.Context) {
 	qrCode := QRCode{
 		Code:      code,
 		AdminID:   user.ID,
-		ExpiresAt: time.Now().Add(5 * time.Minute),
+		ExpiresAt: time.Now().Add(time.Duration(config.QRCode.ExpirationMinutes) * time.Minute),
 	}
 
 	if err := db.Create(&qrCode).Error; err != nil {
@@ -635,11 +796,13 @@ func generateQRCode(ctx iris.Context) {
 		return
 	}
 
-	// Auto-delete expired QR codes after 5 minutes
-	go func() {
-		time.Sleep(5 * time.Minute)
-		db.Delete(&QRCode{}, "code = ?", code)
-	}()
+	// Auto-delete expired QR codes if enabled
+	if config.QRCode.AutoCleanup {
+		go func() {
+			time.Sleep(time.Duration(config.QRCode.ExpirationMinutes) * time.Minute)
+			db.Delete(&QRCode{}, "code = ?", code)
+		}()
+	}
 
 	triggerWebhook("qr_generated", iris.Map{
 		"qrCode":  code,
@@ -1063,6 +1226,11 @@ func getStringValue(m map[string]interface{}, key string) string {
 }
 
 func main() {
+	// Load configuration
+	if err := loadConfig(); err != nil {
+		log.Fatal("Failed to load configuration:", err)
+	}
+
 	// Initialize Database
 	initDB()
 
@@ -1083,9 +1251,9 @@ func main() {
 
 	// CORS middleware
 	app.UseRouter(func(ctx iris.Context) {
-		ctx.Header("Access-Control-Allow-Origin", "*")
-		ctx.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		ctx.Header("Access-Control-Allow-Headers", "*")
+		ctx.Header("Access-Control-Allow-Origin", config.CORS.AllowOrigins)
+		ctx.Header("Access-Control-Allow-Methods", config.CORS.AllowMethods)
+		ctx.Header("Access-Control-Allow-Headers", config.CORS.AllowHeaders)
 
 		if ctx.Method() == iris.MethodOptions {
 			ctx.StatusCode(iris.StatusNoContent)
@@ -1163,8 +1331,9 @@ func main() {
 		integrationAPI.Delete("/api-keys/{key}", revokeAPIKey)
 	}
 
-	log.Println("✅ Server starting on :8080")
-	log.Println("✅ Database: SQLite (attendance.db)")
-	log.Println("✅ Default API Key: ak_test_key_12345")
-	app.Listen(":8080")
+	log.Printf("✅ %s v%s", config.App.Name, config.App.Version)
+	log.Printf("✅ Server starting on :%d", config.App.Port)
+	log.Printf("✅ Database: %s", config.Database.Type)
+	log.Printf("✅ Default API Key: %s", config.API.DefaultKey)
+	app.Listen(fmt.Sprintf(":%d", config.App.Port))
 }

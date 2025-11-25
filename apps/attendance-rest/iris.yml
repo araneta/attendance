@@ -1,0 +1,89 @@
+# Iris Configuration File
+# Attendance Application Settings
+
+# Application Settings
+app:
+  name: "Attendance System"
+  version: "1.0.0"
+  port: 8080
+
+# Database Configuration
+database:
+  # Database type: postgres, mysql, sqlite
+  type: "postgres"
+  
+  # PostgreSQL Configuration
+  postgres:
+    host: "localhost"
+    port: 5432
+    user: "attendance"
+    password: "jaHJvbWUyBggA"
+    dbname: "attendance"
+    sslmode: "disable"
+    timezone: "Asia/Jakarta"
+  
+  # MySQL Configuration (alternative)
+  mysql:
+    host: "localhost"
+    port: 3306
+    user: "root"
+    password: "yourpassword"
+    dbname: "attendance"
+    charset: "utf8mb4"
+    parseTime: true
+    loc: "Local"
+  
+  # SQLite Configuration (alternative)
+  sqlite:
+    path: "attendance.db"
+  
+  # Connection Pool Settings
+  pool:
+    maxIdleConns: 10
+    maxOpenConns: 100
+    connMaxLifetime: 3600 # seconds
+
+# Authentication Settings
+auth:
+  sessionDuration: 24 # hours
+  defaultPassword: "YOTIHCAEQABiABDIHCAIQABiABDILCAMQABgKGAsYgAQy" # for migrated users
+  bcryptCost: 10
+
+# QR Code Settings
+qrcode:
+  expirationMinutes: 5
+  autoCleanup: true
+
+# API Settings
+api:
+  defaultKey: "AYgAQyBwgIEAAYgAQyCQgJEAAYChiABNIBBzY0NWowajeoAgCwAg"
+  rateLimit: 100 # requests per minute
+
+# CORS Settings
+cors:
+  allowOrigins: "*"
+  allowMethods: "GET, POST, PUT, DELETE, OPTIONS"
+  allowHeaders: "*"
+
+# Logging
+logging:
+  level: "info" # debug, info, warn, error
+  format: "json" # json or text
+
+# Default Admin User
+defaultAdmin:
+  email: "info@uinsatu.ac.id"
+  password: "wgIEAAYgAQyCQgJEAAYChiABNIBBzY0NWowajeoAgC"
+  username: "graduation"
+
+# Default Test Users
+defaultUsers:
+  - email: "john@example.com"
+    password: "CAIQABiABDILCAMQABgKGAsYgAQyCwgEEAAYChgLGIAEMgkI"
+    username: "John Doe"
+    role: "employee"
+  
+  - email: "jane@example.com"
+    password: "CAIQABiABDILCAMQABgKGAsYgAQyCwgEEAAYChgLGIAEMgkI"
+    username: "Jane Smith"
+    role: "employee"
