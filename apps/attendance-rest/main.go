@@ -45,22 +45,15 @@ type AttendanceRecord struct {
 	ID        string    `gorm:"primaryKey" json:"id"`
 	UserID    string    `gorm:"index;not null" json:"userId"`
 	Username  string    `json:"username"`
-	QRCode    string    `gorm:"index" json:"qrCode"`
+	QRCode    string    `gorm:"uniqueIndex;not null" json:"qrCode"` // CHANGED: unique per QR code
 	Status    string    `gorm:"default:'present'" json:"status"`
 	Timestamp time.Time `gorm:"index" json:"timestamp"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 
-// Add unique constraint: one user can only scan each QR code once
+// Remove the old constraint function since we're using uniqueIndex on QRCode
 func (AttendanceRecord) TableName() string {
 	return "attendance_records"
-}
-
-// This will be called after auto-migration
-func addAttendanceConstraints(db *gorm.DB) {
-	// Create unique index to prevent duplicate scans
-	db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_user_qr_unique 
-		ON attendance_records(user_id, qr_code)`)
 }
 
 type QRCode struct {
@@ -311,7 +304,6 @@ func initDB() {
 	sqlDB.SetMaxOpenConns(config.Database.Pool.MaxOpenConns)
 	sqlDB.SetConnMaxLifetime(time.Duration(config.Database.Pool.ConnMaxLifetime) * time.Second)
 	
-	log.Println("✅ Database connected successfully")
 	
 	// Check if users table exists with old schema
 	//var tableCount int64
@@ -388,7 +380,7 @@ func initDB() {
 	}
 	
 	// Add unique constraints
-	addAttendanceConstraints(db)
+	//addAttendanceConstraints(db)
 	
 	log.Println("Database tables migrated successfully")
 	
@@ -851,39 +843,30 @@ func scanQRCode(ctx iris.Context) {
 		return
 	}
 
-	// CRITICAL FIX: Check if user already scanned this QR code
+	// CRITICAL: Check if ANYONE has already used this QR code (Single User Per QR)
 	var existingRecord AttendanceRecord
-	err := db.Where("user_id = ? AND qr_code = ?", user.ID, req.QRCode).First(&existingRecord).Error
+	err := db.Where("qr_code = ?", req.QRCode).First(&existingRecord).Error
 	
 	if err == nil {
-		// User already scanned this QR code
-		ctx.JSON(iris.Map{
-			"success": false,
-			"message": "You have already scanned this QR code",
-			"existingRecord": existingRecord,
-		})
+		// QR code already used by someone
+		if existingRecord.UserID == user.ID {
+			// Same user trying again
+			ctx.JSON(iris.Map{
+				"success": false,
+				"message": "You have already scanned this QR code",
+				"existingRecord": existingRecord,
+			})
+		} else {
+			// Different user trying to use already-claimed QR
+			ctx.JSON(iris.Map{
+				"success": false,
+				"message": fmt.Sprintf("This QR code has already been used by %s", existingRecord.Username),
+				"usedBy": existingRecord.Username,
+				"usedAt": existingRecord.Timestamp,
+			})
+		}
 		return
 	}
-
-	// OPTIONAL: Prevent duplicate attendance on the same day
-	// Uncomment if you want only one attendance per user per day
-	/*
-	startOfDay := time.Now().Truncate(24 * time.Hour)
-	endOfDay := startOfDay.Add(24 * time.Hour)
-	
-	var todayRecord AttendanceRecord
-	err = db.Where("user_id = ? AND timestamp >= ? AND timestamp < ?", 
-		user.ID, startOfDay, endOfDay).First(&todayRecord).Error
-	
-	if err == nil {
-		ctx.JSON(iris.Map{
-			"success": false,
-			"message": "Attendance already recorded today",
-			"existingRecord": todayRecord,
-		})
-		return
-	}
-	*/
 
 	record := AttendanceRecord{
 		ID:        generateID(),
